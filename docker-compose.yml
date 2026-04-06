@@ -1,0 +1,44 @@
+# 本地容器编排配置。
+# 一次性拉起 API、Redis、Prometheus，适合演示完整链路。
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # 这里的环境变量会传进容器，并覆盖应用默认配置。
+      APP_ENV: development
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      REDIS_URL: redis://redis:6379/0
+      VECTOR_STORE_PATH: /data/vector_store
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    volumes:
+      # 用命名卷持久化向量索引，避免容器重建后数据丢失。
+      - rag_data:/data/vector_store
+    depends_on:
+      - redis
+
+  redis:
+    # Redis 主要用于缓存查询改写等轻量数据。
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  prometheus:
+    # Prometheus 定期抓取 API 暴露的 `/metrics`。
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+volumes:
+  # 命名卷由 Docker 统一管理，适合本地长期保留索引文件。
+  rag_data:

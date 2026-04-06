@@ -1,0 +1,145 @@
+Metadata-Version: 2.4
+Name: enterprise-rag-platform
+Version: 0.1.0
+Summary: Production-style Agentic RAG platform for enterprise knowledge bases
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.109.0
+Requires-Dist: uvicorn[standard]>=0.27.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: pydantic>=2.5.0
+Requires-Dist: pydantic-settings>=2.1.0
+Requires-Dist: langgraph>=0.2.0
+Requires-Dist: langchain-core>=0.2.0
+Requires-Dist: httpx>=0.26.0
+Requires-Dist: openai>=1.12.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: rank-bm25>=0.2.2
+Requires-Dist: sentence-transformers>=2.3.0
+Requires-Dist: torch>=2.1.0
+Requires-Dist: redis>=5.0.0
+Requires-Dist: prometheus-client>=0.19.0
+Requires-Dist: opentelemetry-api>=1.22.0
+Requires-Dist: opentelemetry-sdk>=1.22.0
+Requires-Dist: opentelemetry-instrumentation-fastapi>=0.43b0
+Requires-Dist: opentelemetry-exporter-otlp>=1.22.0
+Requires-Dist: grpcio>=1.60.0
+Requires-Dist: pypdf>=4.0.0
+Requires-Dist: python-docx>=1.1.0
+Requires-Dist: beautifulsoup4>=4.12.0
+Requires-Dist: lxml>=5.0.0
+Requires-Dist: ragas>=0.1.0
+Requires-Dist: datasets>=2.16.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23.0; extra == "dev"
+Requires-Dist: httpx>=0.26.0; extra == "dev"
+Requires-Dist: locust>=2.20.0; extra == "dev"
+
+# Enterprise RAG Platform
+
+面向企业知识库的 **Agentic RAG** 工程化骨架：接入、索引、混合检索、重排、LangGraph 编排、带引用的生成、拒答策略、RAGAS 评测、Prometheus / OpenTelemetry、Docker 与 Kubernetes。
+
+## 要求
+
+- **Python 3.10+**（团队 Conda 示例：`conda activate tmf_project`）
+- 可选：`OPENAI_API_KEY`（真实 LLM / RAGAS 评测）；未配置时进入可审计的离线应答模式
+
+## 快速开始
+
+```bash
+cd enterprise-rag-platform
+conda activate tmf_project
+cp .env.example .env
+# 建议在 conda 环境内安装，避免与用户目录 ~/.local 的 pip 包混用
+python -m pip install -e ".[dev]"
+mkdir -p data/vector_store data/eval_reports
+# 可选：写入模拟知识库（Markdown），便于本地联调 /chat
+make seed-mock
+make api
+# 另开终端：curl http://127.0.0.1:8000/healthz
+```
+
+模拟文档位于 `data/mock_corpus/`；入库脚本为 `infra/scripts/seed_mock_index.py`（`make seed-mock`）。
+
+## 交互前端（流程演示）
+
+高端简约深色控制台（Vite + React + Tailwind），覆盖 **问答 / 入库+重建索引 / RAGAS 评测 / API 连接**。
+
+```bash
+# 终端 1：后端
+conda activate tmf_project
+make api
+
+# 终端 2：前端（代理到 127.0.0.1:8000）
+make web-install   # 首次
+make web-dev
+# 浏览器打开 http://127.0.0.1:5173
+```
+
+仅后端托管 UI：在项目根执行 `make web-build` 后启动 API，访问 **http://127.0.0.1:8000/** 将重定向至 **/ui/**。Docker 镜像构建阶段会一并编译前端。
+
+前端 **回答区与检索片段** 使用 Markdown 渲染（GFM 表格/任务列表等 + `rehype-sanitize` 净化）。
+
+## 目录结构
+
+```
+enterprise-rag-platform/
+├── apps/api/           # FastAPI：chat / ingest / eval / health / metrics
+├── apps/worker/        # 异步任务（ingest job；队列 consumer 占位）
+├── core/
+│   ├── orchestration/  # LangGraph、state、nodes、policies
+│   ├── retrieval/      # BM25、dense、hybrid、reranker、IndexStore
+│   ├── ingestion/      # parsers / chunkers / cleaners / metadata
+│   ├── generation/     # prompts、LLM、citation、context 格式化
+│   ├── evaluation/     # RAGAS runner + 样例数据集
+│   ├── observability/  # logging、metrics、tracing
+│   └── services/       # RAGRuntime 依赖组装
+├── infra/              # Docker、K8s、Prometheus、脚本
+├── tests/              # unit / integration / eval / load(locust)
+├── docs/               # 架构、API、评测、部署
+├── settings.py         # 兼容入口，转发 core.config.settings
+├── pyproject.toml
+├── docker-compose.yml
+└── Makefile
+```
+
+## 主要 API
+
+| 端点 | 说明 |
+|------|------|
+| `POST /chat` | `question`, `conversation_id?`, `top_k`, `stream` |
+| `POST /ingest` | 上传 PDF/DOCX/HTML/Markdown |
+| `POST /reindex` | 重建稠密向量并 reload 检索器 |
+| `POST /eval` | 运行 RAGAS（需密钥） |
+| `GET /healthz` | 健康检查 |
+| `GET /metrics` | Prometheus |
+
+详见 [docs/api.md](docs/api.md)。
+
+## 配置
+
+复制 `.env.example` 为 `.env`。关键变量：`VECTOR_STORE_PATH`、`REDIS_URL`、`EMBEDDING_MODEL_NAME`、`RERANKER_MODEL_NAME`、`BM25_TOP_K`、`DENSE_TOP_K`、`RERANK_TOP_N`、`MIN_RETRIEVAL_SCORE`、`REFUSAL_CONFIDENCE_THRESHOLD` 等。
+
+## 验证
+
+```bash
+pip install -e ".[dev]"
+pytest tests/unit tests/integration -q
+# 压测（需先启动 API）：
+# locust -f tests/load/locustfile.py --host http://127.0.0.1:8000
+# RAGAS（需 OPENAI_API_KEY）：
+# pytest tests/eval -q
+```
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+## 扩展方向
+
+- 图检索、多租户字段、权限过滤、向量库替换（Milvus/pgvector）、队列化 Worker、对话记忆存储。
+
+更多设计说明见 [docs/architecture.md](docs/architecture.md)。

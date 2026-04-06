@@ -1,0 +1,68 @@
+# Python 项目打包与依赖配置。
+# 这个文件既定义运行依赖，也定义测试行为和 setuptools 打包方式。
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enterprise-rag-platform"
+version = "0.1.0"
+description = "Production-style Agentic RAG platform for enterprise knowledge bases"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Web API 与配置。
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    # 编排与模型服务调用。
+    "langgraph>=0.2.0",
+    "langchain-core>=0.2.0",
+    "httpx>=0.26.0",
+    "openai>=1.12.0",
+    # 检索与向量计算。
+    "numpy>=1.24.0",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=2.3.0",
+    "torch>=2.1.0",
+    "redis>=5.0.0",
+    # 可观测性。
+    "prometheus-client>=0.19.0",
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-instrumentation-fastapi>=0.43b0",
+    "opentelemetry-exporter-otlp>=1.22.0",
+    "grpcio>=1.60.0",
+    # 文档解析。
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    # 评测。
+    "ragas>=0.1.0",
+    "datasets>=2.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # 开发与测试依赖。
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.26.0",
+    "locust>=2.20.0",
+]
+
+[tool.setuptools.packages.find]
+# 告诉 setuptools 只打包 `core*` 和 `apps*` 这些源码目录。
+where = ["."]
+include = ["core*", "apps*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+# pytest 默认配置。
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

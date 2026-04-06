@@ -1,0 +1,33 @@
+/* 全局样式入口。负责注入 Tailwind 层和项目主题变量。 */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 先声明浏览器偏好的主题方向。 */
+:root {
+  color-scheme: dark;
+}
+
+/* 让根节点撑满视口，控制台布局更稳定。 */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* 背景使用光晕 + 渐变，营造“控制台 / 监控面板”氛围。 */
+  @apply bg-ink-950 text-zinc-200 font-sans;
+  background-image: radial-gradient(
+      ellipse 120% 80% at 50% -30%,
+      rgba(56, 189, 248, 0.08),
+      transparent 55%
+    ),
+    linear-gradient(180deg, #0a0b0e 0%, #070708 100%);
+}
+
+/* 文本选中态也维持主题风格。 */
+::selection {
+  @apply bg-sky-500/30 text-white;
+}

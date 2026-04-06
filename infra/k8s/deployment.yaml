@@ -1,0 +1,73 @@
+# Kubernetes API 部署清单。
+# 该文件描述 API Deployment、Service，以及向量索引持久卷挂载方式。
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enterprise-rag-api
+  labels:
+    app: enterprise-rag-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: enterprise-rag-api
+  template:
+    metadata:
+      labels:
+        app: enterprise-rag-api
+    spec:
+      containers:
+        - name: api
+          image: enterprise-rag-platform:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            # K8s 中最基础的配置注入方式就是环境变量。
+            - name: APP_ENV
+              value: production
+            - name: API_HOST
+              value: 0.0.0.0
+            - name: API_PORT
+              value: "8000"
+            - name: VECTOR_STORE_PATH
+              value: /data/vector_store
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: OPENAI_API_KEY
+              value: ""
+          volumeMounts:
+            # 把 PVC 挂到向量目录，Pod 重建后索引仍可保留。
+            - name: vector-data
+              mountPath: /data/vector_store
+          readinessProbe:
+            # 就绪探针通过后，流量才会真正打到这个 Pod。
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            # 存活探针失败时，K8s 会自动重启容器。
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: vector-data
+          persistentVolumeClaim:
+            claimName: enterprise-rag-vector-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enterprise-rag-api
+spec:
+  # 当前使用 ClusterIP，适合集群内部访问；对外暴露可叠加 Ingress。
+  selector:
+    app: enterprise-rag-api
+  ports:
+    - port: 80
+      targetPort: 8000

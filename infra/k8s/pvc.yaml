@@ -1,0 +1,13 @@
+# 向量索引持久卷声明。
+# 作用是在 Kubernetes 中为 `/data/vector_store` 提供持久化存储。
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: enterprise-rag-vector-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
