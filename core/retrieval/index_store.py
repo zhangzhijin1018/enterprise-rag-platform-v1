@@ -35,6 +35,10 @@ class IndexStore:
         # 这里用可重入锁，方便未来某些方法在持锁状态下互相调用。
         self._lock = threading.RLock()
         self._chunks: list[TextChunk] = []
+        # `_chunk_map` 让我们能够通过 chunk_id 做 O(1) 查找。
+        # 在第三轮增强的 parent-child 检索里，这一点很重要：
+        # 检索器只召回 child chunk，但后面需要迅速回扩到 parent chunk。
+        self._chunk_map: dict[str, TextChunk] = {}
         self._embeddings: np.ndarray | None = None
 
     def _ensure_dir(self) -> None:
@@ -48,13 +52,16 @@ class IndexStore:
         with self._lock:
             # 每次 load 都先清空内存，避免磁盘状态和旧缓存混在一起。
             self._chunks = []
+            self._chunk_map = {}
             self._embeddings = None
             if self._chunks_path.is_file():
                 for line in self._chunks_path.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
                         continue
                     obj = json.loads(line)
-                    self._chunks.append(TextChunk.model_validate(obj))
+                    chunk = TextChunk.model_validate(obj)
+                    self._chunks.append(chunk)
+                    self._chunk_map[chunk.metadata.chunk_id] = chunk
             if self._emb_path.is_file() and self._chunks:
                 self._embeddings = np.load(self._emb_path)
                 # 最重要的一致性检查：向量行数必须和 chunk 数一致。
@@ -86,6 +93,7 @@ class IndexStore:
 
         with self._lock:
             self._chunks = []
+            self._chunk_map = {}
             self._embeddings = None
             for p in (self._chunks_path, self._emb_path, self._meta_path):
                 if p.is_file():
@@ -104,12 +112,14 @@ class IndexStore:
                 if cid in id_to_idx:
                     idx = id_to_idx[cid]
                     self._chunks[idx] = ch
+                    self._chunk_map[cid] = ch
                     if self._embeddings is not None and self._embeddings.shape[0] > idx:
                         # 如果是更新已有 chunk，就原位替换对应向量。
                         self._embeddings[idx] = emb
                 else:
                     id_to_idx[cid] = len(self._chunks)
                     self._chunks.append(ch)
+                    self._chunk_map[cid] = ch
                     if self._embeddings is None:
                         # 首个向量需要单独构造二维矩阵。
                         self._embeddings = np.stack([emb], axis=0)
@@ -122,6 +132,7 @@ class IndexStore:
 
         with self._lock:
             self._chunks = list(chunks)
+            self._chunk_map = {chunk.metadata.chunk_id: chunk for chunk in self._chunks}
             self._embeddings = embeddings
 
     def get_all_chunks(self) -> list[TextChunk]:
@@ -135,6 +146,19 @@ class IndexStore:
 
         with self._lock:
             return self._embeddings.copy() if self._embeddings is not None else None
+
+    def get_chunk_by_id(self, chunk_id: str) -> TextChunk | None:
+        """按 chunk_id 读取单个 chunk。
+
+        这是 parent-child 检索里非常关键的辅助能力：
+        - 检索阶段命中 child chunk
+        - 生成阶段需要对应 parent chunk 的完整上下文
+        - 所以必须能快速从 child 的 `parent_chunk_id` 找回 parent
+        """
+
+        with self._lock:
+            chunk = self._chunk_map.get(chunk_id)
+            return chunk.model_copy(deep=True) if chunk is not None else None
 
     @property
     def chunk_count(self) -> int:

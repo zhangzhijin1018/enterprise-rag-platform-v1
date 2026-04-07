@@ -2,7 +2,7 @@
   前端演示控制台主页面。
 
   这个组件承担三个职责：
-  1. 提供问答、入库、评测、连接配置四个操作页签。
+  1. 提供问答、入库、FAQ 管理、评测、连接配置五个操作页签。
   2. 管理 API 调用与流式响应状态。
   3. 展示答案、引用、检索片段和后台任务状态。
 */
@@ -18,6 +18,7 @@ import {
   Activity,
   BookOpen,
   ChevronRight,
+  Database,
   FlaskConical,
   Loader2,
   MessageSquare,
@@ -30,7 +31,7 @@ import {
 } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 
-type Tab = "chat" | "ingest" | "eval" | "settings";
+type Tab = "chat" | "ingest" | "faq" | "eval" | "settings";
 
 type Citation = {
   doc_id: string;
@@ -46,6 +47,20 @@ type RetrievedChunk = {
   score: number;
   content: string;
   metadata: Record<string, unknown>;
+};
+
+type FaqImportResponse = {
+  imported: number;
+  status: string;
+};
+
+type FaqItem = {
+  id: number;
+  question: string;
+  answer: string;
+  keywords: string;
+  category: string;
+  enabled: boolean;
 };
 
 const LS_API = "erp_api_base";
@@ -82,6 +97,7 @@ export default function App() {
   const [confidence, setConfidence] = useState<number | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [chunks, setChunks] = useState<RetrievedChunk[]>([]);
+  const [fastPathSource, setFastPathSource] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   // 入库任务状态。
@@ -89,6 +105,13 @@ export default function App() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<string | null>(null);
+
+  // FAQ 导入状态。
+  const [faqFile, setFaqFile] = useState<File | null>(null);
+  const [faqImported, setFaqImported] = useState<number | null>(null);
+  const [faqImportStatus, setFaqImportStatus] = useState<string | null>(null);
+  const [faqItems, setFaqItems] = useState<FaqItem[]>([]);
+  const [faqListLoading, setFaqListLoading] = useState(false);
 
   // 离线评测状态。
   const [evalBusy, setEvalBusy] = useState(false);
@@ -123,6 +146,13 @@ export default function App() {
     window.localStorage.setItem(LS_API, apiBase);
   }, [apiBase]);
 
+  useEffect(() => {
+    // 只有切到 FAQ 页时才拉列表，避免平时多发一个管理接口请求。
+    if (tab === "faq") {
+      void loadFaqItems();
+    }
+  }, [tab, apiBase]);
+
   async function runChat() {
     // 发新请求前先清空旧结果，避免页面混入上次回答。
     setErr(null);
@@ -131,6 +161,7 @@ export default function App() {
     setAnswerStreamPlain(false);
     setCitations([]);
     setChunks([]);
+    setFastPathSource(null);
     setConfidence(null);
     const useStream = stream;
     try {
@@ -176,10 +207,14 @@ export default function App() {
                 answer?: string;
                 confidence?: number;
                 citations?: Citation[];
+                fast_path_source?: string | null;
               };
               if (d.answer) setAnswer(d.answer);
               if (typeof d.confidence === "number") setConfidence(d.confidence);
               if (Array.isArray(d.citations)) setCitations(d.citations);
+              if (typeof d.fast_path_source === "string") {
+                setFastPathSource(d.fast_path_source);
+              }
             }
             if (evt.type === "meta" && evt.data && typeof evt.data === "object") {
               // meta 事件通常先于最终答案到达，适合提前渲染检索信息。
@@ -187,10 +222,14 @@ export default function App() {
                 retrieved_chunks?: RetrievedChunk[];
                 confidence?: number;
                 citations?: Citation[];
+                fast_path_source?: string | null;
               };
               if (Array.isArray(d.retrieved_chunks)) setChunks(d.retrieved_chunks);
               if (typeof d.confidence === "number") setConfidence(d.confidence);
               if (Array.isArray(d.citations)) setCitations(d.citations);
+              if (typeof d.fast_path_source === "string") {
+                setFastPathSource(d.fast_path_source);
+              }
             }
           }
         }
@@ -208,11 +247,13 @@ export default function App() {
         const j = (await res.json()) as {
           answer: string;
           confidence: number;
+          fast_path_source?: string | null;
           citations: Citation[];
           retrieved_chunks: RetrievedChunk[];
         };
         setAnswer(j.answer);
         setConfidence(j.confidence);
+        setFastPathSource(j.fast_path_source ?? null);
         setCitations(j.citations ?? []);
         setChunks(j.retrieved_chunks ?? []);
       }
@@ -224,6 +265,67 @@ export default function App() {
         // 流式结束后再切回 Markdown 渲染，避免半截 Markdown 抖动。
         setAnswerStreamPlain(false);
       }
+    }
+  }
+
+  async function runFaqImport() {
+    // FAQ 导入是“结构化问答”的单独入口，不走普通文档入库。
+    setErr(null);
+    setFaqImported(null);
+    setFaqImportStatus(null);
+    if (!faqFile) {
+      setErr("请选择 FAQ CSV 文件");
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", faqFile);
+      const res = await fetch(apiPath("/faq/import", apiBase), {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = (await res.json()) as FaqImportResponse;
+      setFaqImported(j.imported);
+      setFaqImportStatus(j.status);
+      await loadFaqItems();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadFaqItems() {
+    // FAQ 管理页读取的是全量列表，包含启用和停用状态。
+    setErr(null);
+    setFaqListLoading(true);
+    try {
+      const res = await fetch(apiPath("/faq", apiBase));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = (await res.json()) as { items: FaqItem[] };
+      setFaqItems(j.items ?? []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFaqListLoading(false);
+    }
+  }
+
+  async function toggleFaqItem(item: FaqItem) {
+    // FAQ 管理先支持启用/停用，避免一开始就把在线编辑做得过重。
+    setErr(null);
+    try {
+      const res = await fetch(apiPath(`/faq/${item.id}`, apiBase), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !item.enabled }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadFaqItems();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -321,6 +423,7 @@ export default function App() {
   const tabs: { id: Tab; label: string; icon: ReactNode }[] = [
     { id: "chat", label: "智能问答", icon: <MessageSquare className="h-4 w-4" /> },
     { id: "ingest", label: "知识接入", icon: <Upload className="h-4 w-4" /> },
+    { id: "faq", label: "FAQ 导入", icon: <Database className="h-4 w-4" /> },
     { id: "eval", label: "离线评测", icon: <FlaskConical className="h-4 w-4" /> },
     { id: "settings", label: "连接", icon: <Settings2 className="h-4 w-4" /> },
   ];
@@ -475,12 +578,19 @@ export default function App() {
                   )}
                 </div>
                 {confidence !== null && (
-                  <p className="mt-3 text-xs text-zinc-500">
-                    置信度{" "}
-                    <span className="font-mono text-sky-300/90">
-                      {(confidence * 100).toFixed(1)}%
-                    </span>
-                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                    <p>
+                      置信度{" "}
+                      <span className="font-mono text-sky-300/90">
+                        {(confidence * 100).toFixed(1)}%
+                      </span>
+                    </p>
+                    {fastPathSource && (
+                      <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] text-emerald-200">
+                        {fastPathSource}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </section>
@@ -554,11 +664,11 @@ export default function App() {
           <section className="max-w-xl rounded-2xl border border-white/[0.08] bg-white/[0.03] p-8 shadow-panel backdrop-blur-xl">
             <h2 className="mb-2 text-lg font-medium text-white">文档入库</h2>
             <p className="mb-6 text-sm text-zinc-500">
-              支持 PDF / DOCX / HTML / Markdown。任务异步执行，可轮询状态。
+              支持 PDF / DOCX / PPTX / HTML / Markdown / TXT / CSV。任务异步执行，可轮询状态。
             </p>
             <input
               type="file"
-              accept=".pdf,.docx,.html,.htm,.md,.markdown"
+              accept=".pdf,.docx,.pptx,.html,.htm,.md,.markdown,.txt,.csv"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="mb-6 block w-full cursor-pointer text-sm text-zinc-400 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-sm file:text-zinc-200 hover:file:bg-white/[0.14]"
             />
@@ -604,6 +714,121 @@ export default function App() {
               </div>
             )}
           </section>
+          </>
+        )}
+
+        {tab === "faq" && (
+          <>
+            {/* FAQ 页同时包含“导入”和“已导入 FAQ 管理”。 */}
+            <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
+              <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-8 shadow-panel backdrop-blur-xl">
+                <h2 className="mb-2 text-lg font-medium text-white">FAQ 导入</h2>
+                <p className="mb-3 text-sm text-zinc-500">
+                  把结构化 FAQ CSV 导入 MySQL。导入完成后，后续问答会先走
+                  Redis / MySQL FAQ 快速通道，再决定是否进入 RAG。
+                </p>
+                <div className="mb-6 rounded-xl border border-white/[0.06] bg-ink-900/45 p-4 text-xs text-zinc-400">
+                  <p className="mb-2 font-medium text-zinc-300">推荐 CSV 表头</p>
+                  <code className="font-mono text-[11px] text-sky-300/90">
+                    question,answer,keywords,category
+                  </code>
+                </div>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={(e) => setFaqFile(e.target.files?.[0] ?? null)}
+                  className="mb-6 block w-full cursor-pointer text-sm text-zinc-400 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-sm file:text-zinc-200 hover:file:bg-white/[0.14]"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void runFaqImport()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2.5 text-sm font-medium text-white shadow-soft transition hover:brightness-110 disabled:opacity-40"
+                >
+                  <Database className="h-4 w-4" />
+                  导入 FAQ
+                </button>
+
+                {(faqImportStatus || faqImported !== null) && (
+                  <div className="mt-6 rounded-xl border border-white/[0.06] bg-ink-900/50 p-4 text-sm">
+                    <p className="text-xs text-zinc-500">导入状态</p>
+                    <p className="mt-1 text-zinc-200">{faqImportStatus ?? "—"}</p>
+                    <p className="mt-2 text-xs text-zinc-400">
+                      导入条数：{" "}
+                      <span className="font-mono text-emerald-300/90">
+                        {faqImported ?? 0}
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-8 shadow-panel backdrop-blur-xl">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-medium text-white">已导入 FAQ</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      查看当前 FAQ 列表，并快速启用或停用某条 FAQ。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={faqListLoading}
+                    onClick={() => void loadFaqItems()}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2 text-sm text-zinc-200 transition hover:bg-white/[0.07] disabled:opacity-40"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${faqListLoading ? "animate-spin" : ""}`} />
+                    刷新列表
+                  </button>
+                </div>
+
+                {faqItems.length === 0 ? (
+                  <p className="text-sm text-zinc-600">
+                    {faqListLoading ? "加载 FAQ 列表中…" : "暂无 FAQ 数据"}
+                  </p>
+                ) : (
+                  <ul className="space-y-4">
+                    {faqItems.map((item) => (
+                      <li
+                        key={item.id}
+                        className="rounded-xl border border-white/[0.06] bg-ink-900/45 p-4"
+                      >
+                        <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-zinc-100">
+                              {item.question}
+                            </p>
+                            <p className="mt-1 text-[11px] font-mono text-zinc-500">
+                              faq:{item.id}
+                              {item.category ? ` · ${item.category}` : ""}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void toggleFaqItem(item)}
+                            className={`rounded-full border px-3 py-1 text-[11px] font-medium transition ${
+                              item.enabled
+                                ? "border-emerald-500/25 bg-emerald-500/12 text-emerald-200 hover:bg-emerald-500/18"
+                                : "border-zinc-500/25 bg-zinc-500/10 text-zinc-300 hover:bg-zinc-500/15"
+                            }`}
+                          >
+                            {item.enabled ? "已启用" : "已停用"}
+                          </button>
+                        </div>
+                        <div className="rounded-lg bg-black/20 p-3 text-xs leading-relaxed text-zinc-300">
+                          <MarkdownView content={item.answer} compact />
+                        </div>
+                        {item.keywords && (
+                          <p className="mt-3 text-[11px] text-zinc-500">
+                            关键词：{item.keywords}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
           </>
         )}
 

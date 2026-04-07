@@ -40,9 +40,19 @@ class SparseRetriever:
         self._bm25: BM25Okapi | None = None
 
     def rebuild(self, chunks: Sequence[TextChunk]) -> None:
-        """根据全部 chunk 重建 BM25 词项统计。"""
+        """根据全部 chunk 重建 BM25 词项统计。
 
-        self._chunks = list(chunks)
+        第三轮增强后，索引里会同时存在 parent / child 两层 chunk。
+        这里刻意只把 `searchable=True` 的 chunk 放进 BM25，
+        也就是默认只索引 child chunks。
+
+        原因：
+        - child chunk 更短，更适合精准召回；
+        - parent chunk 更长，更适合生成时提供完整上下文；
+        - 如果把 parent 和 child 都塞进 BM25，检索结果会出现大量“长块压制短块”的噪声。
+        """
+
+        self._chunks = [c for c in chunks if c.searchable]
         self._corpus_tokens = [tokenize(c.content) for c in self._chunks]
         self._bm25 = BM25Okapi(self._corpus_tokens) if self._corpus_tokens else None
 

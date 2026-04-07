@@ -101,10 +101,11 @@ async def chat(
                 "retrieved_chunks": ctx_raw,
                 "confidence": state.get("confidence"),
                 "refusal": refusal,
+                "fast_path_source": state.get("fast_path_source"),
             }
             # `meta` 事件让前端在答案尚未生成完时，也能先展示片段和引用信息。
             yield json.dumps({"type": "meta", "data": meta}, ensure_ascii=False) + "\n"
-            if not contexts or refusal:
+            if state.get("fast_path_source") or not contexts or refusal:
                 # 空上下文或已拒答时，不再调用 LLM，直接把现有答案作为 token / final 发出。
                 yield json.dumps(
                     {"type": "token", "data": state.get("answer") or ""}, ensure_ascii=False
@@ -116,6 +117,7 @@ async def chat(
                             "answer": state.get("answer") or "",
                             "confidence": float(state.get("confidence") or 0.0),
                             "citations": state.get("citations") or [],
+                            "fast_path_source": state.get("fast_path_source"),
                         },
                     },
                     ensure_ascii=False,
@@ -174,6 +176,7 @@ async def chat(
     resp = ChatResponse(
         answer=state.get("answer") or "",
         confidence=float(state.get("confidence") or 0.0),
+        fast_path_source=state.get("fast_path_source") or None,
         citations=_citations_from_state(state),
         retrieved_chunks=_chunks_from_state(state),
     )

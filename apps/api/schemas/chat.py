@@ -33,5 +33,6 @@ class RetrievedChunkSchema(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     confidence: float
+    fast_path_source: str | None = None
     citations: list[CitationSchema]
     retrieved_chunks: list[RetrievedChunkSchema]

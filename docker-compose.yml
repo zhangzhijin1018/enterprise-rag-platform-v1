@@ -1,11 +1,13 @@
 # 本地容器编排配置。
-# 一次性拉起 API、Redis、Prometheus，适合演示完整链路。
+# 一次性拉起 API、Redis、MySQL、Prometheus，适合演示完整链路。
 
 services:
   api:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     ports:
       - "8000:8000"
     environment:
@@ -14,20 +16,46 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: "8000"
       REDIS_URL: redis://redis:6379/0
+      MYSQL_URL: mysql+pymysql://rag:rag@mysql:3306/enterprise_rag
       VECTOR_STORE_PATH: /data/vector_store
+      VECTOR_BACKEND: milvus
+      MILVUS_URI: /data/milvus/enterprise_rag.db
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       # 用命名卷持久化向量索引，避免容器重建后数据丢失。
       - rag_data:/data/vector_store
+      - milvus_data:/data/milvus
     depends_on:
       - redis
+      - mysql
 
   redis:
     # Redis 主要用于缓存查询改写等轻量数据。
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  mysql:
+    # MySQL 用于存储结构化 FAQ，给 Redis / RAG 前面的快速检索通道提供数据源。
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: enterprise_rag
+      MYSQL_USER: rag
+      MYSQL_PASSWORD: rag
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-urag", "-prag"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mysql_data:/var/lib/mysql
 
   prometheus:
     # Prometheus 定期抓取 API 暴露的 `/metrics`。
@@ -42,3 +70,5 @@ services:
 volumes:
   # 命名卷由 Docker 统一管理，适合本地长期保留索引文件。
   rag_data:
+  milvus_data:
+  mysql_data:

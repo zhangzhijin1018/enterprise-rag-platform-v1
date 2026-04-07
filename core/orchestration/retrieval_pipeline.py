@@ -2,11 +2,20 @@
 
 流式回答场景下，通常希望尽快把“检索到的片段和引用”先返回给前端，
 因此这里提供一个不包含最终生成阶段的精简链路。
+
+在第二轮增强后，这条链路也纳入了“澄清判定”：
+- 如果当前问题不适合直接检索，就直接返回澄清结果；
+- 否则再进入多路查询检索与 rerank。
 """
 
 from __future__ import annotations
 
 from core.orchestration.nodes.analyze_query import analyze_query_node
+from core.orchestration.nodes.clarify_query import (
+    clarify_query_node,
+    request_clarification_node,
+)
+from core.orchestration.fast_path import try_fast_path_answer
 from core.orchestration.nodes.retrieve_docs import retrieve_docs_node
 from core.orchestration.nodes.rerank_docs import rerank_docs_node
 from core.orchestration.nodes.rewrite_query import rewrite_query_node
@@ -33,7 +42,15 @@ async def run_retrieval_only(
     top_k_dense: int | None = None,
     rerank_top_n: int | None = None,
 ) -> RAGState:
-    """执行“分析 -> 改写 -> 检索 -> 重排”的精简链路。"""
+    """执行“分析 -> 澄清 -> 规划 -> 检索 -> 重排”的精简链路。"""
+
+    fast = await try_fast_path_answer(runtime, question)
+    if fast is not None:
+        return {
+            **fast,
+            "conversation_id": conversation_id,
+            "errors": [],
+        }
 
     state: RAGState = {
         "question": question,
@@ -45,6 +62,9 @@ async def run_retrieval_only(
     }
     # 这里显式顺序执行，而不是通过完整 LangGraph compile，目的是让流式场景更轻量。
     state = _merge(state, await analyze_query_node(state))
+    state = _merge(state, await clarify_query_node(state, runtime))
+    if state.get("need_clarify"):
+        return _merge(state, await request_clarification_node(state))
     state = _merge(state, await rewrite_query_node(state, runtime))
     state = _merge(state, await retrieve_docs_node(state, runtime))
     fused = state.get("fused_hits") or []

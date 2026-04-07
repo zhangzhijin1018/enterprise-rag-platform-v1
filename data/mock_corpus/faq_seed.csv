@@ -1,0 +1,4 @@
+question,answer,keywords,category
+"AI 学习路线是怎样的？","建议先掌握 Python、数据处理基础，再学习检索、Embedding、向量数据库、RAG 编排与评测，最后补工程化部署和监控。","AI,学习路线,Python,RAG","learning"
+"错误码 E-1001 是什么？","错误码 E-1001 表示 Redis connection failed。优先检查网络、端口、密码和 Redis 服务状态。","E-1001,Redis,connection failed","error_code"
+"Milvus 和 Zilliz Cloud 有什么区别？","Milvus 是开源向量数据库，适合自建；Zilliz Cloud 是托管版服务，适合减少运维成本。","Milvus,Zilliz Cloud,区别,对比","product_compare"

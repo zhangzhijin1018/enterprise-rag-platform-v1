@@ -1,6 +1,6 @@
 # Enterprise RAG Platform
 
-面向企业知识库的 **Agentic RAG** 工程化骨架：接入、索引、混合检索、重排、LangGraph 编排、带引用的生成、拒答策略、RAGAS 评测、Prometheus / OpenTelemetry、Docker 与 Kubernetes。
+面向企业知识库的 **Agentic RAG** 工程化骨架：接入、Redis 热点答案缓存、MySQL FAQ 快速检索、澄清判定、多路查询、父子分层切块、混合检索、Milvus 向量检索、重排、LangGraph 编排、带引用的生成、拒答策略、RAGAS 评测、Prometheus / OpenTelemetry、Docker 与 Kubernetes。
 
 ## 要求
 
@@ -15,7 +15,7 @@ conda activate tmf_project
 cp .env.example .env
 # 建议在 conda 环境内安装，避免与用户目录 ~/.local 的 pip 包混用
 python -m pip install -e ".[dev]"
-mkdir -p data/vector_store data/eval_reports
+mkdir -p data/vector_store data/milvus data/eval_reports
 # 可选：写入模拟知识库（Markdown），便于本地联调 /chat
 make seed-mock
 make api
@@ -26,7 +26,7 @@ make api
 
 ## 交互前端（流程演示）
 
-高端简约深色控制台（Vite + React + Tailwind），覆盖 **问答 / 入库+重建索引 / RAGAS 评测 / API 连接**。
+高端简约深色控制台（Vite + React + Tailwind），覆盖 **问答 / 入库+重建索引 / FAQ 导入 / RAGAS 评测 / API 连接**。
 
 ```bash
 # 终端 1：后端
@@ -71,17 +71,54 @@ enterprise-rag-platform/
 | 端点 | 说明 |
 |------|------|
 | `POST /chat` | `question`, `conversation_id?`, `top_k`, `stream` |
-| `POST /ingest` | 上传 PDF/DOCX/HTML/Markdown |
-| `POST /reindex` | 重建稠密向量并 reload 检索器 |
+| `POST /ingest` | 上传 PDF/DOCX/PPTX/HTML/Markdown/TXT/CSV |
+| `POST /faq/import` | 导入 FAQ CSV 到 MySQL，并刷新 FAQ 检索索引 |
+| `POST /reindex` | 重建稠密向量并同步 Milvus / reload 检索器 |
 | `POST /eval` | 运行 RAGAS（需密钥） |
 | `GET /healthz` | 健康检查 |
 | `GET /metrics` | Prometheus |
 
 详见 [docs/api.md](docs/api.md)。
 
+当前入库已覆盖 7 类常见企业文档格式：
+
+- `PDF`：规章、手册、论文、导出报表
+- `DOCX`：SOP、制度、方案文档
+- `PPTX`：培训课件、汇报材料、架构分享
+- `HTML`：知识库网页、帮助中心页面
+- `Markdown`：技术文档、FAQ、运行手册
+- `TXT`：日志摘录、FAQ 草稿、告警说明
+- `CSV`：错误码表、FAQ 导出、配置项清单
+
 ## 配置
 
-复制 `.env.example` 为 `.env`。关键变量：`VECTOR_STORE_PATH`、`REDIS_URL`、`EMBEDDING_MODEL_NAME`、`RERANKER_MODEL_NAME`、`BM25_TOP_K`、`DENSE_TOP_K`、`RERANK_TOP_N`、`MIN_RETRIEVAL_SCORE`、`REFUSAL_CONFIDENCE_THRESHOLD` 等。
+复制 `.env.example` 为 `.env`。当前默认同时启用：
+
+- `Redis`：缓存热点答案与查询改写
+- `MySQL`：存储 FAQ 结构化问答
+- `Milvus Lite`：执行向量召回
+
+关键变量：
+
+- `REDIS_URL=redis://localhost:6379/0`
+- `MYSQL_URL=mysql+pymysql://rag:rag@127.0.0.1:3306/enterprise_rag`
+- `VECTOR_BACKEND=milvus`
+- `MILVUS_URI=./data/milvus/enterprise_rag.db`
+- `MILVUS_COLLECTION_NAME=rag_chunks`
+- `VECTOR_STORE_PATH=./data/vector_store`
+- `FAQ_BM25_THRESHOLD=0.85`
+- `ANSWER_CACHE_TTL_SEC=86400`
+- `EMBEDDING_MODEL_NAME=BAAI/bge-m3`
+- `RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3`
+
+说明：
+
+- `Redis -> MySQL FAQ -> RAG` 是当前问答链路的执行顺序。
+- Redis 命中时直接返回热点答案。
+- MySQL FAQ 命中且置信度达到阈值时直接返回 FAQ 答案。
+- `Milvus` 负责 dense retrieval。
+- 本地 `chunks.jsonl / embeddings.npy` 继续保留，作为 BM25、parent chunk 回扩和可读调试镜像。
+- 如果你要切到远端 Milvus Standalone / Cluster，只需要把 `MILVUS_URI` 改成类似 `http://127.0.0.1:19530`。
 
 ## 验证
 
@@ -100,8 +137,16 @@ pytest tests/unit tests/integration -q
 docker compose up --build
 ```
 
+如果 Docker 构建阶段需要下载较大的 Python 依赖，建议先在 `.env` 中配置：
+
+```bash
+PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+```
+
+`docker-compose.yml` 会把这个变量透传给镜像构建阶段的 `pip install`。依赖层默认会复用 Docker 构建缓存；只有 `pyproject.toml`、`Dockerfile`、前端依赖文件或 `PIP_INDEX_URL` 发生变化，或者本机清理了 Docker build cache，才会重新下载依赖。
+
 ## 扩展方向
 
-- 图检索、多租户字段、权限过滤、向量库替换（Milvus/pgvector）、队列化 Worker、对话记忆存储。
+- 图检索、多租户字段、权限过滤、Milvus 过滤表达式增强、队列化 Worker、对话记忆存储。
 
 更多设计说明见 [docs/architecture.md](docs/architecture.md)。

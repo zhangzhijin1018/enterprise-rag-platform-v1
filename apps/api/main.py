@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from apps.api.routes import chat, eval as eval_routes, health, ingest
+from apps.api.routes import chat, eval as eval_routes, faq, health, ingest
 from core.config.settings import get_settings
 from core.observability import configure_logging, get_logger
 from core.observability.metrics import REQUEST_LATENCY, metrics_response
@@ -68,6 +68,7 @@ if _origins:
 
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(faq.router)
 app.include_router(ingest.router)
 app.include_router(eval_routes.router)
 

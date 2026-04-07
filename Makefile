@@ -7,7 +7,7 @@ UVICORN := $(PYTHON) -m uvicorn
 PYTEST := $(PYTHON) -m pytest
 RUFF := $(PYTHON) -m ruff
 
-.PHONY: install dev api test lint docker-up docker-down env
+.PHONY: install dev api test lint docker-up docker-up-aliyun docker-down env
 
 env:
 	@echo "Python: $(PYTHON)"
@@ -34,6 +34,10 @@ lint:
 docker-up:
 	# 构建并后台启动完整 compose 环境。
 	docker compose up --build -d
+
+docker-up-aliyun:
+	# 构建时临时使用阿里云 PyPI 镜像，适合网络较慢或大包下载不稳定场景。
+	PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple docker compose up --build -d
 
 docker-down:
 	# 停止 compose 管理的服务。

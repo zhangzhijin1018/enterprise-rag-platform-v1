@@ -12,10 +12,13 @@ from typing import Any
 
 from core.config.settings import get_settings
 from core.generation.llm_client import LLMClient
+from core.retrieval.faq_retriever import MysqlFaqRetriever
+from core.retrieval.faq_store import MysqlFaqStore
 from core.retrieval.cache import RedisCache
 from core.retrieval.dense_retriever import DenseRetriever
 from core.retrieval.hybrid_fusion import HybridFusion
 from core.retrieval.index_store import IndexStore
+from core.retrieval.milvus_retriever import MilvusDenseRetriever
 from core.retrieval.reranker import CrossEncoderReranker
 from core.retrieval.sparse_retriever import SparseRetriever
 
@@ -31,13 +34,20 @@ class RAGRuntime:
         # 稀疏检索器通常初始化便宜，所以直接常驻。
         self.sparse = SparseRetriever(self.settings)
         # 稠密检索器和 reranker 模型较重，采用懒加载，减少冷启动成本。
+        #
+        # 第五轮增强后，这里会根据 `VECTOR_BACKEND` 选择：
+        # - `file`   -> 本地 NumPy 向量矩阵
+        # - `milvus` -> Milvus / Milvus Lite
         self._dense: DenseRetriever | None = None
         self.fusion = HybridFusion(self.settings)
         self._reranker: CrossEncoderReranker | None = None
         self.llm = LLMClient(self.settings)
         self.cache = RedisCache()
+        self.faq_store = MysqlFaqStore(self.settings)
+        self.faq_retriever = MysqlFaqRetriever(self.settings)
         # 编译后的 LangGraph 可以复用，避免每次问答都重新构图。
         self._compiled_graph: Any = None
+        self.reload_faq_index()
         # 启动时先加载已有索引，这样服务一起来就能直接问答。
         self.reload_index()
 
@@ -46,7 +56,10 @@ class RAGRuntime:
         """按需初始化向量检索器。"""
 
         if self._dense is None:
-            self._dense = DenseRetriever(self.settings)
+            if self.settings.vector_backend == "milvus":
+                self._dense = MilvusDenseRetriever(self.settings)
+            else:
+                self._dense = DenseRetriever(self.settings)
         return self._dense
 
     @property
@@ -83,11 +96,22 @@ class RAGRuntime:
         if chunks:
             # 第三步：如果已有向量，就直接喂给向量检索器，避免重复编码。
             self.dense.rebuild(chunks, emb)
+            # 如果当前使用的是 Milvus backend，而远端 collection 还不存在，
+            # 这里会利用本地镜像自动补建一次，保证“已有索引快照 -> 服务重启”
+            # 这种场景下仍能正常工作。
+            self.dense.ensure_remote_index(chunks, emb)
         else:
             # 索引为空时也要把向量检索器重置，避免保留旧状态。
             self.dense.rebuild([], None)
         # 数据变了，旧图里的运行时引用就要失效，下次访问时重新 compile。
         self._compiled_graph = None
+
+    def reload_faq_index(self) -> None:
+        """重建 MySQL FAQ 的内存检索索引。"""
+
+        self.faq_store.initialize()
+        entries = self.faq_store.list_enabled_entries()
+        self.faq_retriever.rebuild(entries)
 
 
 _runtime_lock = threading.Lock()

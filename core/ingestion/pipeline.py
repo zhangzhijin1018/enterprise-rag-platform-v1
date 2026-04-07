@@ -29,7 +29,19 @@ def parse_and_chunk_file(path: Path, source: str | None = None) -> tuple[Documen
 
     # `source` 用于记录文档来源；如果外部没传，就退化为文件路径字符串。
     src = source or str(path)
-    # 先根据文件扩展名选择解析器，例如 PDF / DOCX / HTML / Markdown。
+    # 先根据文件扩展名选择解析器。
+    #
+    # 当前已经支持：
+    # - PDF
+    # - DOCX
+    # - HTML
+    # - Markdown
+    # - TXT
+    # - CSV
+    # - PPTX
+    #
+    # 这里刻意把“格式判断”集中放在 registry，而不是散落在 pipeline 中，
+    # 这样后续扩展新文件类型时，主流程本身不需要改动。
     parser = get_parser_for_filename(path.name)
     # 解析器负责把原始文件统一成 Document。
     doc = parser.parse(path, src)
@@ -68,6 +80,9 @@ def index_chunks(
     # `replace_all` 的好处是磁盘上的 chunks 和 embeddings 总能保持完全对齐。
     store.replace_all(all_chunks, np.asarray(emb))
     store.save()
+    # 如果当前启用了 Milvus backend，这里会把最新全量快照同步到 Milvus。
+    # 文件型 backend 下该方法是 no-op，不会引入额外成本。
+    runtime.dense.sync_remote_index(all_chunks, np.asarray(emb))
     # 索引文件落盘后，必须刷新运行时检索器，否则线上查询仍会读旧内存。
     runtime.reload_index()
 
@@ -88,4 +103,5 @@ def rebuild_index_from_store_files(runtime: RAGRuntime) -> None:
     # 这里不会改 chunk 内容，只是重算向量矩阵，适合模型切换后的全量重建。
     runtime.store.replace_all(chunks, np.asarray(emb))
     runtime.store.save()
+    runtime.dense.sync_remote_index(chunks, np.asarray(emb))
     runtime.reload_index()

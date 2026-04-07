@@ -31,16 +31,27 @@ spec:
               value: 0.0.0.0
             - name: API_PORT
               value: "8000"
+            - name: VECTOR_BACKEND
+              value: milvus
             - name: VECTOR_STORE_PATH
               value: /data/vector_store
+            - name: MILVUS_URI
+              value: /data/milvus/enterprise_rag.db
             - name: REDIS_URL
               value: redis://redis:6379/0
+            - name: MYSQL_URL
+              value: mysql+pymysql://rag:rag@mysql:3306/enterprise_rag
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: ""
             - name: OPENAI_API_KEY
               value: ""
           volumeMounts:
             # 把 PVC 挂到向量目录，Pod 重建后索引仍可保留。
             - name: vector-data
               mountPath: /data/vector_store
+            # Milvus Lite 使用本地文件 URI 时，也需要单独持久化目录。
+            - name: milvus-data
+              mountPath: /data/milvus
           readinessProbe:
             # 就绪探针通过后，流量才会真正打到这个 Pod。
             httpGet:
@@ -59,6 +70,9 @@ spec:
         - name: vector-data
           persistentVolumeClaim:
             claimName: enterprise-rag-vector-pvc
+        - name: milvus-data
+          persistentVolumeClaim:
+            claimName: enterprise-rag-milvus-pvc
 ---
 apiVersion: v1
 kind: Service
