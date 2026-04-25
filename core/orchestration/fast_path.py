@@ -103,11 +103,16 @@ def _build_fast_path_state(
 
 
 async def try_fast_path_answer(runtime: RAGRuntime, question: str) -> RAGState | None:
-    """尝试通过 Redis / MySQL FAQ 快速返回答案。"""
+    """尝试通过 Redis / MySQL FAQ 快速返回答案。
+
+    这层的定位是“先消化高频、稳定、标准化的问题”，
+    而不是替代后面的完整 RAG。
+    """
 
     normalized = _normalize_question(question)
     cached = runtime.cache.get_json("answer", normalized)
     if isinstance(cached, dict) and cached.get("answer"):
+        # Redis 层缓存的是“最终答案”，命中后直接返回。
         source_id = str(cached.get("source_id") or "cache:answer")
         _record_faq_hit(runtime, source_id)
         return _build_fast_path_state(
@@ -124,6 +129,7 @@ async def try_fast_path_answer(runtime: RAGRuntime, question: str) -> RAGState |
     if not matches:
         return None
     best = matches[0]
+    # FAQ 虽然命中了，但仍要过一个阈值，避免把边缘相似问题误当成标准问答。
     if best.confidence < runtime.settings.faq_bm25_threshold:
         return None
 

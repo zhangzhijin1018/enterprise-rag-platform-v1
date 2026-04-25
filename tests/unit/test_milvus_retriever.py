@@ -32,6 +32,8 @@ class _FakeMilvusClient:
         self.dropped = False
         self.upserted: list[dict[str, Any]] = []
         self.search_rows: list[dict[str, Any]] = []
+        self.last_search_kwargs: dict[str, Any] = {}
+        self.describe_fields: list[dict[str, Any]] = []
 
     def has_collection(self, *, collection_name: str) -> bool:
         _ = collection_name
@@ -54,8 +56,12 @@ class _FakeMilvusClient:
         _ = collection_name
         self.upserted.extend(data)
 
+    def describe_collection(self, *, collection_name: str) -> dict[str, Any]:
+        _ = collection_name
+        return {"fields": self.describe_fields}
+
     def search(self, **kwargs: Any) -> list[list[dict[str, Any]]]:
-        _ = kwargs
+        self.last_search_kwargs = kwargs
         return [self.search_rows]
 
 
@@ -80,7 +86,17 @@ class _TestableMilvusDenseRetriever(MilvusDenseRetriever):
 
 
 def _chunk(chunk_id: str, *, parent_chunk_id: str = "", level: str = "child") -> TextChunk:
-    extra: dict[str, Any] = {"chunk_level": level}
+    extra: dict[str, Any] = {
+        "chunk_level": level,
+        "department": "冲压二车间",
+        "shift": "夜班",
+        "line": "3号线",
+        "person": "张三",
+        "time": "今天",
+        "environment": "生产",
+        "version": "v2.4.1",
+        "doc_category": "schedule",
+    }
     if parent_chunk_id:
         extra["parent_chunk_id"] = parent_chunk_id
     return TextChunk(
@@ -115,12 +131,37 @@ def test_milvus_sync_remote_index_recreates_collection_and_upserts_entities() ->
     assert len(client.upserted) == 2
     assert client.upserted[0]["chunk_id"] == "child-1"
     assert client.upserted[0]["parent_chunk_id"] == "parent-1"
+    assert client.upserted[0]["department"] == "冲压二车间"
+    assert client.upserted[0]["environment"] == "生产"
+    assert client.upserted[0]["version"] == "v2.4.1"
     assert client.upserted[1]["chunk_level"] == "parent"
 
 
 def test_milvus_search_maps_hits_back_to_retrieved_chunks() -> None:
     client = _FakeMilvusClient()
     client.exists = True
+    client.describe_fields = [
+        {"name": "chunk_id"},
+        {"name": "doc_id"},
+        {"name": "source"},
+        {"name": "title"},
+        {"name": "page"},
+        {"name": "section"},
+        {"name": "chunk_level"},
+        {"name": "parent_chunk_id"},
+        {"name": "searchable"},
+        {"name": "department"},
+        {"name": "shift"},
+        {"name": "line"},
+        {"name": "person"},
+        {"name": "time"},
+        {"name": "environment"},
+        {"name": "version"},
+        {"name": "doc_category"},
+        {"name": "content"},
+        {"name": "extra_json"},
+        {"name": "embedding"},
+    ]
     client.search_rows = [
         {
             "id": "child-1",
@@ -135,6 +176,14 @@ def test_milvus_search_maps_hits_back_to_retrieved_chunks() -> None:
                 "chunk_level": "child",
                 "parent_chunk_id": "parent-1",
                 "searchable": True,
+                "department": "冲压二车间",
+                "shift": "夜班",
+                "line": "3号线",
+                "person": "张三",
+                "time": "今天",
+                "environment": "生产",
+                "version": "v2.4.1",
+                "doc_category": "schedule",
                 "content": "child content",
                 "extra_json": {"foo": "bar"},
             },
@@ -148,7 +197,7 @@ def test_milvus_search_maps_hits_back_to_retrieved_chunks() -> None:
     retriever = _TestableMilvusDenseRetriever(settings, client)
     retriever.rebuild([_chunk("child-1", parent_chunk_id="parent-1")], None)
 
-    hits = retriever.search("what is milvus", top_k=3)
+    hits = retriever.search("what is milvus", top_k=3, filters={"department": "冲压二车间"})
 
     assert len(hits) == 1
     assert hits[0].chunk_id == "child-1"
@@ -156,3 +205,38 @@ def test_milvus_search_maps_hits_back_to_retrieved_chunks() -> None:
     assert hits[0].trace["retriever"] == "milvus_dense"
     assert hits[0].metadata.parent_chunk_id == "parent-1"
     assert hits[0].metadata.extra["foo"] == "bar"
+    assert hits[0].metadata.extra["department"] == "冲压二车间"
+    assert client.last_search_kwargs["filter"] == 'searchable == true and department == "冲压二车间"'
+
+
+def test_milvus_ensure_remote_index_rebuilds_when_collection_schema_is_legacy() -> None:
+    client = _FakeMilvusClient()
+    client.exists = True
+    client.describe_fields = [
+        {"name": "chunk_id"},
+        {"name": "doc_id"},
+        {"name": "source"},
+        {"name": "title"},
+        {"name": "page"},
+        {"name": "section"},
+        {"name": "chunk_level"},
+        {"name": "parent_chunk_id"},
+        {"name": "searchable"},
+        {"name": "content"},
+        {"name": "extra_json"},
+        {"name": "embedding"},
+    ]
+    settings = Settings(
+        VECTOR_BACKEND="milvus",
+        MILVUS_URI="./tmp/milvus.db",
+        MILVUS_COLLECTION_NAME="rag_chunks_test",
+    )
+    retriever = _TestableMilvusDenseRetriever(settings, client)
+    chunks = [_chunk("child-1", parent_chunk_id="parent-1")]
+    matrix = np.asarray([[0.1, 0.2, 0.3]], dtype=np.float32)
+
+    retriever.ensure_remote_index(chunks, matrix)
+
+    assert client.dropped is True
+    assert client.created is True
+    assert client.upserted[0]["department"] == "冲压二车间"

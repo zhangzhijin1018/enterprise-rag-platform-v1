@@ -17,10 +17,11 @@ from core.retrieval.faq_store import MysqlFaqStore
 from core.retrieval.cache import RedisCache
 from core.retrieval.dense_retriever import DenseRetriever
 from core.retrieval.hybrid_fusion import HybridFusion
-from core.retrieval.index_store import IndexStore
 from core.retrieval.milvus_retriever import MilvusDenseRetriever
 from core.retrieval.reranker import CrossEncoderReranker
 from core.retrieval.sparse_retriever import SparseRetriever
+from core.security.ml_risk_provider import build_ml_risk_provider
+from core.security.risk_engine import RuleBasedRiskEngine
 
 
 class RAGRuntime:
@@ -29,19 +30,19 @@ class RAGRuntime:
     def __init__(self) -> None:
         # 先读取全局配置，后续所有依赖都基于这份配置初始化。
         self.settings = get_settings()
-        # `IndexStore` 负责管理 chunks 和 embeddings 的磁盘持久化。
-        self.store = IndexStore(self.settings)
         # 稀疏检索器通常初始化便宜，所以直接常驻。
         self.sparse = SparseRetriever(self.settings)
         # 稠密检索器和 reranker 模型较重，采用懒加载，减少冷启动成本。
         #
-        # 第五轮增强后，这里会根据 `VECTOR_BACKEND` 选择：
-        # - `file`   -> 本地 NumPy 向量矩阵
-        # - `milvus` -> Milvus / Milvus Lite
+        # 当前主链路已经收敛到 Milvus：
+        # - Milvus 负责作为唯一权威存储
+        # - 运行时只在内存里保留 sparse / rerank 等必要视图
         self._dense: DenseRetriever | None = None
         self.fusion = HybridFusion(self.settings)
         self._reranker: CrossEncoderReranker | None = None
         self.llm = LLMClient(self.settings)
+        self.ml_risk_provider = build_ml_risk_provider(self.settings)
+        self.risk_engine = RuleBasedRiskEngine(self.settings)
         self.cache = RedisCache()
         self.faq_store = MysqlFaqStore(self.settings)
         self.faq_retriever = MysqlFaqRetriever(self.settings)
@@ -56,10 +57,7 @@ class RAGRuntime:
         """按需初始化向量检索器。"""
 
         if self._dense is None:
-            if self.settings.vector_backend == "milvus":
-                self._dense = MilvusDenseRetriever(self.settings)
-            else:
-                self._dense = DenseRetriever(self.settings)
+            self._dense = MilvusDenseRetriever(self.settings)
         return self._dense
 
     @property
@@ -85,29 +83,27 @@ class RAGRuntime:
         return self._compiled_graph
 
     def reload_index(self) -> None:
-        """重新加载磁盘索引，并同步刷新检索器状态。"""
+        """重新加载检索索引，并同步刷新检索器状态。
 
-        # 第一步：把磁盘里的 chunks / embeddings 读回内存。
-        self.store.load()
-        chunks = self.store.get_all_chunks()
-        emb = self.store.get_embeddings()
-        # 第二步：重建 BM25 词项统计。
+        这是“入库完成后让新知识立即可用”的关键动作。
+        """
+
+        chunks: list = []
+        emb = None
+        if self.settings.vector_backend == "milvus" and isinstance(self.dense, MilvusDenseRetriever):
+            chunks = self.dense.fetch_all_chunks()
+        # 第二步：重建 sparse / local query planning 依赖的内存视图。
         self.sparse.rebuild(chunks)
-        if chunks:
-            # 第三步：如果已有向量，就直接喂给向量检索器，避免重复编码。
-            self.dense.rebuild(chunks, emb)
-            # 如果当前使用的是 Milvus backend，而远端 collection 还不存在，
-            # 这里会利用本地镜像自动补建一次，保证“已有索引快照 -> 服务重启”
-            # 这种场景下仍能正常工作。
-            self.dense.ensure_remote_index(chunks, emb)
-        else:
-            # 索引为空时也要把向量检索器重置，避免保留旧状态。
-            self.dense.rebuild([], None)
+        # 第三步：刷新 dense backend 的本地可搜索视图。
+        self.dense.rebuild(chunks, emb)
         # 数据变了，旧图里的运行时引用就要失效，下次访问时重新 compile。
         self._compiled_graph = None
 
     def reload_faq_index(self) -> None:
-        """重建 MySQL FAQ 的内存检索索引。"""
+        """重建 MySQL FAQ 的内存检索索引。
+
+        FAQ 这条线和长文索引拆开刷新，可以减少不必要的重建成本。
+        """
 
         self.faq_store.initialize()
         entries = self.faq_store.list_enabled_entries()

@@ -14,7 +14,7 @@ from apps.api.dependencies.common import get_runtime_dep
 from apps.api.job_store import job_store
 from apps.api.schemas.common import IngestResponse, JobStatusResponse
 from apps.worker.jobs.ingest_job import run_ingest_path
-from core.ingestion.pipeline import rebuild_index_from_store_files
+from core.ingestion.pipeline import rebuild_index_from_milvus
 from core.services.runtime import RAGRuntime
 
 router = APIRouter(tags=["ingest"])
@@ -48,7 +48,10 @@ async def ingest(
     file: UploadFile = File(...),
     runtime: RAGRuntime = Depends(get_runtime_dep),
 ) -> IngestResponse:
-    """上传单个文件并异步触发入库。"""
+    """上传单个文件并异步触发入库。
+
+    当前接口只负责接收任务，不负责在请求线程里完成整条入库流水线。
+    """
 
     job_id = job_store.create()
     suffix = Path(file.filename or "upload").suffix
@@ -75,7 +78,12 @@ def reindex(
     background: BackgroundTasks,
     runtime: RAGRuntime = Depends(get_runtime_dep),
 ) -> IngestResponse:
-    """根据磁盘里的 chunks 重新生成向量索引。"""
+    """根据 Milvus 里的已入库 chunk 重新生成向量索引。
+
+    它和 `/ingest` 的区别是：
+    - 不重新解析原始文件
+    - 直接基于 Milvus 中现有 chunk 文本重算 embedding
+    """
 
     job_id = job_store.create()
 
@@ -83,7 +91,7 @@ def reindex(
         # 这里和上传入库一样走后台任务，避免重建向量时阻塞请求线程。
         try:
             job_store.update(job_id, "running")
-            rebuild_index_from_store_files(runtime)
+            rebuild_index_from_milvus(runtime)
             job_store.update(job_id, "completed")
         except Exception as e:  # noqa: BLE001
             job_store.update(job_id, "failed", detail=str(e))

@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,12 @@ from fastapi.staticfiles import StaticFiles
 
 from apps.api.routes import chat, eval as eval_routes, faq, health, ingest
 from core.config.settings import get_settings
-from core.observability import configure_logging, get_logger
+from core.observability import (
+    clear_request_log_context,
+    configure_logging,
+    get_logger,
+    set_request_log_context,
+)
 from core.observability.metrics import REQUEST_LATENCY, metrics_response
 from core.observability.tracing import setup_tracing
 
@@ -38,7 +44,15 @@ async def lifespan(app: FastAPI):
     """
 
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        enable_file_logging=settings.enable_file_logging,
+        log_dir=settings.log_dir,
+        app_log_filename=settings.app_log_filename,
+        audit_log_filename=settings.audit_log_filename,
+        log_max_bytes=settings.log_max_bytes,
+        log_backup_count=settings.log_backup_count,
+    )
     setup_tracing()
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -83,11 +97,25 @@ async def timing_middleware(request: Request, call_next):
     - 把耗时写入 Prometheus Histogram，后续可以按路由统计延迟分布。
     """
 
+    trace_id = request.headers.get("X-Trace-ID") or uuid4().hex
+    request.state.trace_id = trace_id
+    request.state.request_started_at = time.time()
+    set_request_log_context(
+        trace_id=trace_id,
+        event="request_received",
+        request_path=request.url.path,
+        method=request.method,
+    )
     t0 = time.perf_counter()
-    response = await call_next(request)
-    path = request.url.path
-    REQUEST_LATENCY.labels(route=path, method=request.method).observe(time.perf_counter() - t0)
-    return response
+    response = None
+    try:
+        response = await call_next(request)
+        response.headers["X-Trace-ID"] = trace_id
+        return response
+    finally:
+        path = request.url.path
+        REQUEST_LATENCY.labels(route=path, method=request.method).observe(time.perf_counter() - t0)
+        clear_request_log_context()
 
 
 @app.get("/metrics")

@@ -32,7 +32,13 @@ from .base import BaseParser
 
 
 def _safe_slide_title(slide) -> str:
-    """尽量从 slide 中提取标题。"""
+    """尽量从 slide 中提取标题。
+
+    PPT 的标题通常是整页语义最强的锚点：
+
+    - 后续切块时可以作为页级标题
+    - 检索命中后能帮助用户快速理解片段来自哪一页
+    """
 
     title_shape = getattr(slide.shapes, "title", None)
     if title_shape is not None:
@@ -42,8 +48,37 @@ def _safe_slide_title(slide) -> str:
     return ""
 
 
+def _shape_lines(shape) -> list[str]:
+    """从 shape 中尽量提取带层级的文本行。
+
+    相比普通文档段落，PPT 更像“标题 + 若干短句 bullet”。
+    这里保留 bullet 缩进层级，是为了尽量维持课件/汇报材料原本的结构感。
+    """
+
+    text_frame = getattr(shape, "text_frame", None)
+    if text_frame is None:
+        text = clean_text(getattr(shape, "text", "")).strip()
+        return [text] if text else []
+
+    lines: list[str] = []
+    for paragraph in text_frame.paragraphs:
+        text = clean_text("".join(run.text for run in paragraph.runs) or paragraph.text or "").strip()
+        if not text:
+            continue
+        level = int(getattr(paragraph, "level", 0) or 0)
+        if level > 0:
+            indent = "  " * min(level, 4)
+            lines.append(f"{indent}- {text}")
+        else:
+            lines.append(text)
+    return lines
+
+
 class PptxParser(BaseParser):
-    """PPTX 解析器。"""
+    """PPTX 解析器。
+
+    目标不是复刻完整页面样式，而是把 slide 里的标题和正文组织成可检索文本。
+    """
 
     def parse(self, path: Path, source: str) -> Document:
         """把 PPTX 文档转成结构化文本。
@@ -63,6 +98,8 @@ class PptxParser(BaseParser):
 
         presentation = Presentation(str(path))
         lines: list[str] = []
+        # 把第一页遇到的有效标题作为文档默认标题。
+        # 这样在 PPT 文件名不规范时，返回给用户的标题也更自然。
         first_title = ""
         for slide_idx, slide in enumerate(presentation.slides, start=1):
             slide_title = _safe_slide_title(slide)
@@ -79,16 +116,16 @@ class PptxParser(BaseParser):
                 # 标题已经单独处理过，避免重复写入。
                 if getattr(slide.shapes, "title", None) is shape:
                     continue
-                text = clean_text(getattr(shape, "text", "")).strip()
-                if text:
-                    lines.append(text)
+                lines.extend(_shape_lines(shape))
 
         content = clean_text("\n".join(lines))
         return Document(
+            # 统一由上游生成真正的文档唯一标识。
             doc_id="",
             source=source,
             title=first_title or path.stem,
             content=content,
             mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            # slide 总数对审计、展示和后续调试都很有用，先作为轻量 metadata 保留下来。
             metadata={"slides": len(presentation.slides)},
         )

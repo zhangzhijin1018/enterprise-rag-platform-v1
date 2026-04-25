@@ -19,7 +19,7 @@ def test_ragas_minimal_runs() -> None:
     reset_runtime()
     p = (
         Path(__file__).resolve().parents[2]
-        / "core/evaluation/datasets/sample_eval.jsonl"
+        / "core/evaluation/datasets/enterprise_eval.jsonl"
     )
     out = run_ragas_eval(dataset_path=p)
     assert out.exists()

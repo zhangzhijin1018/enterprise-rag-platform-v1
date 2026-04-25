@@ -40,7 +40,11 @@ class FaqMatch:
 
 
 class MysqlFaqRetriever:
-    """FAQ 内存检索器。"""
+    """FAQ 内存检索器。
+
+    它的作用是把结构化 FAQ 转成更适合快速问答的轻量召回层。
+    这层的评价标准和长文 RAG 不一样，更强调“标准问句是否被问到了”。
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()

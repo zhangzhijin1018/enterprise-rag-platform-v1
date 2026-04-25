@@ -40,6 +40,21 @@ type Citation = {
   source: string;
   page: number | null;
   section: string | null;
+  doc_type?: string | null;
+  owner_department?: string | null;
+  data_classification?: string | null;
+  version?: string | null;
+  effective_date?: string | null;
+  authority_level?: string | null;
+  source_system?: string | null;
+  business_domain?: string | null;
+  process_stage?: string | null;
+  section_path?: string | null;
+  matched_routes?: string[];
+  retrieval_score?: number | null;
+  semantic_score?: number | null;
+  governance_rank_score?: number | null;
+  selection_reason?: string | null;
 };
 
 type RetrievedChunk = {
@@ -98,6 +113,18 @@ export default function App() {
   const [citations, setCitations] = useState<Citation[]>([]);
   const [chunks, setChunks] = useState<RetrievedChunk[]>([]);
   const [fastPathSource, setFastPathSource] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState(false);
+  const [refusalReason, setRefusalReason] = useState<string | null>(null);
+  const [answerMode, setAnswerMode] = useState<string | null>(null);
+  const [dataClassification, setDataClassification] = useState<string | null>(null);
+  const [modelRoute, setModelRoute] = useState<string | null>(null);
+  const [analysisConfidence, setAnalysisConfidence] = useState<number | null>(null);
+  const [analysisSource, setAnalysisSource] = useState<string | null>(null);
+  const [analysisReason, setAnalysisReason] = useState<string | null>(null);
+  const [conflictDetected, setConflictDetected] = useState(false);
+  const [conflictSummary, setConflictSummary] = useState<string | null>(null);
+  const [traceId, setTraceId] = useState<string | null>(null);
+  const [auditId, setAuditId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   // 入库任务状态。
@@ -116,6 +143,7 @@ export default function App() {
   // 离线评测状态。
   const [evalBusy, setEvalBusy] = useState(false);
   const [evalOut, setEvalOut] = useState<string | null>(null);
+  const [evalAnalysisOut, setEvalAnalysisOut] = useState<string | null>(null);
   const [evalSummary, setEvalSummary] = useState<Record<string, number> | null>(null);
 
   // 页面右上角显示一个更友好的 API 来源文本。
@@ -163,6 +191,18 @@ export default function App() {
     setChunks([]);
     setFastPathSource(null);
     setConfidence(null);
+    setRefusal(false);
+    setRefusalReason(null);
+    setAnswerMode(null);
+    setDataClassification(null);
+    setModelRoute(null);
+    setAnalysisConfidence(null);
+    setAnalysisSource(null);
+    setAnalysisReason(null);
+    setConflictDetected(false);
+    setConflictSummary(null);
+    setTraceId(null);
+    setAuditId(null);
     const useStream = stream;
     try {
       if (useStream) {
@@ -178,6 +218,7 @@ export default function App() {
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setTraceId(res.headers.get("X-Trace-ID"));
         const reader = res.body?.getReader();
         if (!reader) throw new Error("无响应流");
         const dec = new TextDecoder();
@@ -208,12 +249,61 @@ export default function App() {
                 confidence?: number;
                 citations?: Citation[];
                 fast_path_source?: string | null;
+                refusal?: boolean;
+                refusal_reason?: string | null;
+                answer_mode?: string | null;
+                data_classification?: string | null;
+                model_route?: string | null;
+                analysis_confidence?: number | null;
+                analysis_source?: string | null;
+                analysis_reason?: string | null;
+                conflict_detected?: boolean;
+                conflict_summary?: string | null;
+                trace_id?: string | null;
+                audit_id?: string | null;
               };
               if (d.answer) setAnswer(d.answer);
               if (typeof d.confidence === "number") setConfidence(d.confidence);
               if (Array.isArray(d.citations)) setCitations(d.citations);
               if (typeof d.fast_path_source === "string") {
                 setFastPathSource(d.fast_path_source);
+              }
+              if (typeof d.refusal === "boolean") setRefusal(d.refusal);
+              if (typeof d.refusal_reason === "string" || d.refusal_reason === null) {
+                setRefusalReason(d.refusal_reason ?? null);
+              }
+              if (typeof d.answer_mode === "string" || d.answer_mode === null) {
+                setAnswerMode(d.answer_mode ?? null);
+              }
+              if (
+                typeof d.data_classification === "string" ||
+                d.data_classification === null
+              ) {
+                setDataClassification(d.data_classification ?? null);
+              }
+              if (typeof d.model_route === "string" || d.model_route === null) {
+                setModelRoute(d.model_route ?? null);
+              }
+              if (typeof d.analysis_confidence === "number") {
+                setAnalysisConfidence(d.analysis_confidence);
+              }
+              if (typeof d.analysis_source === "string" || d.analysis_source === null) {
+                setAnalysisSource(d.analysis_source ?? null);
+              }
+              if (typeof d.analysis_reason === "string" || d.analysis_reason === null) {
+                setAnalysisReason(d.analysis_reason ?? null);
+              }
+              if (typeof d.conflict_detected === "boolean") {
+                setConflictDetected(d.conflict_detected);
+              }
+              if (typeof d.conflict_summary === "string" || d.conflict_summary === null) {
+                setConflictSummary(d.conflict_summary ?? null);
+              }
+              if (typeof d.trace_id === "string" || d.trace_id === null) {
+                setTraceId(d.trace_id ?? null);
+              }
+              if (typeof d.audit_id === "string" || d.audit_id === null) {
+                setAuditId(d.audit_id ?? null);
               }
             }
             if (evt.type === "meta" && evt.data && typeof evt.data === "object") {
@@ -223,12 +313,61 @@ export default function App() {
                 confidence?: number;
                 citations?: Citation[];
                 fast_path_source?: string | null;
+                refusal?: boolean;
+                refusal_reason?: string | null;
+                answer_mode?: string | null;
+                data_classification?: string | null;
+                model_route?: string | null;
+                analysis_confidence?: number | null;
+                analysis_source?: string | null;
+                analysis_reason?: string | null;
+                conflict_detected?: boolean;
+                conflict_summary?: string | null;
+                trace_id?: string | null;
+                audit_id?: string | null;
               };
               if (Array.isArray(d.retrieved_chunks)) setChunks(d.retrieved_chunks);
               if (typeof d.confidence === "number") setConfidence(d.confidence);
               if (Array.isArray(d.citations)) setCitations(d.citations);
               if (typeof d.fast_path_source === "string") {
                 setFastPathSource(d.fast_path_source);
+              }
+              if (typeof d.refusal === "boolean") setRefusal(d.refusal);
+              if (typeof d.refusal_reason === "string" || d.refusal_reason === null) {
+                setRefusalReason(d.refusal_reason ?? null);
+              }
+              if (typeof d.answer_mode === "string" || d.answer_mode === null) {
+                setAnswerMode(d.answer_mode ?? null);
+              }
+              if (
+                typeof d.data_classification === "string" ||
+                d.data_classification === null
+              ) {
+                setDataClassification(d.data_classification ?? null);
+              }
+              if (typeof d.model_route === "string" || d.model_route === null) {
+                setModelRoute(d.model_route ?? null);
+              }
+              if (typeof d.analysis_confidence === "number") {
+                setAnalysisConfidence(d.analysis_confidence);
+              }
+              if (typeof d.analysis_source === "string" || d.analysis_source === null) {
+                setAnalysisSource(d.analysis_source ?? null);
+              }
+              if (typeof d.analysis_reason === "string" || d.analysis_reason === null) {
+                setAnalysisReason(d.analysis_reason ?? null);
+              }
+              if (typeof d.conflict_detected === "boolean") {
+                setConflictDetected(d.conflict_detected);
+              }
+              if (typeof d.conflict_summary === "string" || d.conflict_summary === null) {
+                setConflictSummary(d.conflict_summary ?? null);
+              }
+              if (typeof d.trace_id === "string" || d.trace_id === null) {
+                setTraceId(d.trace_id ?? null);
+              }
+              if (typeof d.audit_id === "string" || d.audit_id === null) {
+                setAuditId(d.audit_id ?? null);
               }
             }
           }
@@ -244,18 +383,45 @@ export default function App() {
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setTraceId(res.headers.get("X-Trace-ID"));
         const j = (await res.json()) as {
           answer: string;
           confidence: number;
           fast_path_source?: string | null;
           citations: Citation[];
           retrieved_chunks: RetrievedChunk[];
+          refusal?: boolean;
+          refusal_reason?: string | null;
+          answer_mode?: string | null;
+          data_classification?: string | null;
+          model_route?: string | null;
+          analysis_confidence?: number | null;
+          analysis_source?: string | null;
+          analysis_reason?: string | null;
+          conflict_detected?: boolean;
+          conflict_summary?: string | null;
+          trace_id?: string | null;
+          audit_id?: string | null;
         };
         setAnswer(j.answer);
         setConfidence(j.confidence);
         setFastPathSource(j.fast_path_source ?? null);
         setCitations(j.citations ?? []);
         setChunks(j.retrieved_chunks ?? []);
+        setRefusal(Boolean(j.refusal));
+        setRefusalReason(j.refusal_reason ?? null);
+        setAnswerMode(j.answer_mode ?? null);
+        setDataClassification(j.data_classification ?? null);
+        setModelRoute(j.model_route ?? null);
+        setAnalysisConfidence(
+          typeof j.analysis_confidence === "number" ? j.analysis_confidence : null,
+        );
+        setAnalysisSource(j.analysis_source ?? null);
+        setAnalysisReason(j.analysis_reason ?? null);
+        setConflictDetected(Boolean(j.conflict_detected));
+        setConflictSummary(j.conflict_summary ?? null);
+        setTraceId(j.trace_id ?? res.headers.get("X-Trace-ID"));
+        setAuditId(j.audit_id ?? null);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -397,6 +563,7 @@ export default function App() {
     // 评测可能耗时较长，所以单独维护一套 loading / 结果状态。
     setErr(null);
     setEvalOut(null);
+    setEvalAnalysisOut(null);
     setEvalSummary(null);
     setEvalBusy(true);
     try {
@@ -408,9 +575,11 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = (await res.json()) as {
         report_path: string;
+        analysis_path?: string | null;
         summary?: Record<string, number> | null;
       };
       setEvalOut(j.report_path);
+      setEvalAnalysisOut(j.analysis_path ?? null);
       setEvalSummary(j.summary ?? null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -590,6 +759,71 @@ export default function App() {
                         {fastPathSource}
                       </span>
                     )}
+                    {answerMode && (
+                      <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 font-mono text-[11px] text-sky-200">
+                        {answerMode}
+                      </span>
+                    )}
+                    {dataClassification && (
+                      <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 font-mono text-[11px] text-amber-200">
+                        {dataClassification}
+                      </span>
+                    )}
+                    {modelRoute && (
+                      <span className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-2.5 py-1 font-mono text-[11px] text-fuchsia-200">
+                        {modelRoute}
+                      </span>
+                    )}
+                    {analysisSource && (
+                      <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 font-mono text-[11px] text-violet-200">
+                        {analysisSource}
+                      </span>
+                    )}
+                    {analysisConfidence !== null && (
+                      <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 font-mono text-[11px] text-cyan-200">
+                        analysis {(analysisConfidence * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {(conflictDetected || refusalReason || traceId || auditId || analysisReason) && (
+                  <div className="mt-4 space-y-3">
+                    {analysisReason && (
+                      <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300/90">
+                          Query Understanding
+                        </p>
+                        <p className="mt-2 leading-relaxed">{analysisReason}</p>
+                      </div>
+                    )}
+                    {conflictDetected && conflictSummary && (
+                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-300/90">
+                          冲突提示
+                        </p>
+                        <p className="mt-2 leading-relaxed">{conflictSummary}</p>
+                      </div>
+                    )}
+                    {refusal && refusalReason && (
+                      <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-100">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-300/90">
+                          拒答原因
+                        </p>
+                        <p className="mt-2 font-mono text-xs">{refusalReason}</p>
+                      </div>
+                    )}
+                    {traceId && (
+                      <div className="rounded-xl border border-white/[0.06] bg-ink-900/40 p-4 text-xs text-zinc-400">
+                        <p className="text-zinc-500">请求链路 Trace ID</p>
+                        <p className="mt-2 font-mono break-all text-zinc-200">{traceId}</p>
+                      </div>
+                    )}
+                    {auditId && (
+                      <div className="rounded-xl border border-white/[0.06] bg-ink-900/40 p-4 text-xs text-zinc-400">
+                        <p className="text-zinc-500">审计追踪 ID</p>
+                        <p className="mt-2 font-mono break-all text-zinc-200">{auditId}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -618,6 +852,99 @@ export default function App() {
                           {c.section ? ` · ${c.section}` : ""}
                           {c.page != null ? ` · p.${c.page}` : ""}
                         </p>
+                        {(c.doc_type ||
+                          c.owner_department ||
+                          c.business_domain ||
+                          c.process_stage ||
+                          c.version ||
+                          c.effective_date ||
+                          c.authority_level ||
+                          c.data_classification) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {c.doc_type && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.doc_type}
+                              </span>
+                            )}
+                            {c.owner_department && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.owner_department}
+                              </span>
+                            )}
+                            {c.business_domain && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.business_domain}
+                              </span>
+                            )}
+                            {c.process_stage && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.process_stage}
+                              </span>
+                            )}
+                            {c.version && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                v{c.version}
+                              </span>
+                            )}
+                            {c.effective_date && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.effective_date}
+                              </span>
+                            )}
+                            {c.authority_level && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.authority_level}
+                              </span>
+                            )}
+                            {c.data_classification && (
+                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-zinc-300">
+                                {c.data_classification}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {(c.selection_reason ||
+                          c.section_path ||
+                          (c.matched_routes && c.matched_routes.length > 0) ||
+                          c.governance_rank_score != null) && (
+                          <div className="mt-3 rounded-md border border-amber-500/15 bg-amber-500/5 p-2 text-[10px] text-zinc-400">
+                            {c.selection_reason && (
+                              <p className="leading-relaxed text-zinc-300">{c.selection_reason}</p>
+                            )}
+                            {c.section_path && (
+                              <p className="mt-1">
+                                章节路径: <span className="text-zinc-200">{c.section_path}</span>
+                              </p>
+                            )}
+                            {c.matched_routes && c.matched_routes.length > 0 && (
+                              <p className="mt-1">
+                                命中路线: <span className="text-zinc-200">{c.matched_routes.join(" / ")}</span>
+                              </p>
+                            )}
+                            {(c.retrieval_score != null ||
+                              c.semantic_score != null ||
+                              c.governance_rank_score != null) && (
+                              <p className="mt-1">
+                                分数:
+                                {c.retrieval_score != null && (
+                                  <span className="ml-1 text-zinc-200">
+                                    retrieval {c.retrieval_score.toFixed(3)}
+                                  </span>
+                                )}
+                                {c.semantic_score != null && (
+                                  <span className="ml-2 text-zinc-200">
+                                    semantic {c.semantic_score.toFixed(3)}
+                                  </span>
+                                )}
+                                {c.governance_rank_score != null && (
+                                  <span className="ml-2 text-zinc-200">
+                                    governance {c.governance_rank_score.toFixed(3)}
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -858,6 +1185,14 @@ export default function App() {
               <div className="mt-6 rounded-xl border border-white/[0.06] bg-ink-900/50 p-4 text-sm">
                 <p className="text-xs text-zinc-500">报告路径</p>
                 <p className="font-mono text-xs text-sky-300/90 break-all">{evalOut}</p>
+                {evalAnalysisOut && (
+                  <>
+                    <p className="mt-3 text-xs text-zinc-500">Explainability 报告</p>
+                    <p className="font-mono text-xs text-amber-300/90 break-all">
+                      {evalAnalysisOut}
+                    </p>
+                  </>
+                )}
                 {evalSummary && Object.keys(evalSummary).length > 0 && (
                   <ul className="mt-4 space-y-1 text-xs text-zinc-400">
                     {Object.entries(evalSummary).map(([k, v]) => (

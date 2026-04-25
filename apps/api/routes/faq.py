@@ -1,4 +1,7 @@
-"""FAQ 管理接口。"""
+"""FAQ 管理接口。
+
+这层不直接参与主 RAG 图，但它决定了 fast path 里的 FAQ 数据怎么被导入、查看、启停和更新。
+"""
 
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ async def import_faq_csv(
     suffix = Path(file.filename or "faq.csv").suffix or ".csv"
     tmp = Path(tempfile.mkdtemp()) / f"faq_import{suffix}"
     try:
+        # FAQ 导入完成后必须立刻刷新 FAQ 检索器，否则 fast path 还是旧数据。
         tmp.write_bytes(await file.read())
         imported = runtime.faq_store.import_csv(tmp)
         runtime.reload_faq_index()
@@ -71,6 +75,7 @@ def toggle_faq_entry(
     ok = runtime.faq_store.set_enabled(entry_id, body.enabled)
     if not ok:
         raise HTTPException(status_code=404, detail="FAQ entry not found")
+    # 启停会直接影响 fast path 行为，所以这里同步刷新 FAQ 内存索引。
     runtime.reload_faq_index()
     return FaqToggleResponse(id=entry_id, enabled=body.enabled, status="completed")
 
@@ -92,5 +97,6 @@ def update_faq_entry(
     )
     if not ok:
         raise HTTPException(status_code=404, detail="FAQ entry not found")
+    # 更新 FAQ 内容后，同样要刷新 FAQ 内存索引。
     runtime.reload_faq_index()
     return FaqUpdateResponse(id=entry_id, status="completed")

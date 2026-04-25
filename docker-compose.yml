@@ -17,14 +17,12 @@ services:
       API_PORT: "8000"
       REDIS_URL: redis://redis:6379/0
       MYSQL_URL: mysql+pymysql://rag:rag@mysql:3306/enterprise_rag
-      VECTOR_STORE_PATH: /data/vector_store
       VECTOR_BACKEND: milvus
       MILVUS_URI: /data/milvus/enterprise_rag.db
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
-      # 用命名卷持久化向量索引，避免容器重建后数据丢失。
-      - rag_data:/data/vector_store
+      # 当前只保留 Milvus 目录作为检索底座持久化位置。
       - milvus_data:/data/milvus
     depends_on:
       - redis
@@ -68,7 +66,6 @@ services:
       - api
 
 volumes:
-  # 命名卷由 Docker 统一管理，适合本地长期保留索引文件。
-  rag_data:
+  # 命名卷由 Docker 统一管理，适合本地长期保留 Milvus 数据文件。
   milvus_data:
   mysql_data:

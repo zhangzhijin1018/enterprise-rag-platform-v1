@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from core.ingestion.parsers.csv_parser import CsvParser
+from core.ingestion.parsers.docx_parser import DocxParser
 from core.ingestion.parsers.pptx_parser import PptxParser
 from core.ingestion.parsers.registry import get_parser_for_filename
 from core.ingestion.parsers.text_parser import TextParser
@@ -60,9 +61,40 @@ def test_csv_parser_transforms_rows_into_structured_text(tmp_path: Path) -> None
     assert document.mime_type == "text/csv"
     assert document.metadata["rows"] == 2
     assert document.metadata["columns"] == 3
-    assert "## Row 1" in document.content
+    assert "## Row 1: E-1001" in document.content
     assert "code: E-1001" in document.content
     assert "solution: Increase query timeout" in document.content
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("docx") is None,
+    reason="python-docx 未安装，跳过真实 DOCX 解析测试",
+)
+def test_docx_parser_preserves_heading_levels_and_tables(tmp_path: Path) -> None:
+    """DOCX 解析器应尽量保留标题层级、列表和表格结构。"""
+
+    from docx import Document as WordDocument
+
+    file_path = tmp_path / "manual.docx"
+    document = WordDocument()
+    document.add_heading("巡检制度", level=1)
+    document.add_heading("巡检步骤", level=2)
+    document.add_paragraph("先检查输煤皮带。", style="List Bullet")
+    table = document.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "code"
+    table.rows[0].cells[1].text = "reason"
+    table.rows[1].cells[0].text = "E-1001"
+    table.rows[1].cells[1].text = "网络异常"
+    document.save(file_path)
+
+    parser = DocxParser()
+    parsed = parser.parse(file_path, source="unit-test")
+
+    assert "# 巡检制度" in parsed.content
+    assert "## 巡检步骤" in parsed.content
+    assert "- 先检查输煤皮带。" in parsed.content
+    assert "## Table 1" in parsed.content
+    assert "code: E-1001" in parsed.content
 
 
 def test_registry_supports_txt_csv_and_pptx() -> None:
@@ -115,7 +147,11 @@ def test_pptx_parser_extracts_slide_title_and_body(tmp_path: Path) -> None:
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[1])
     slide.shapes.title.text = "RAG 方案介绍"
-    slide.placeholders[1].text = "支持多路查询\n支持父子切块"
+    text_frame = slide.placeholders[1].text_frame
+    text_frame.text = "支持多路查询"
+    paragraph = text_frame.add_paragraph()
+    paragraph.level = 1
+    paragraph.text = "支持父子切块"
     presentation.save(file_path)
 
     parser = PptxParser()
@@ -125,3 +161,4 @@ def test_pptx_parser_extracts_slide_title_and_body(tmp_path: Path) -> None:
     assert document.metadata["slides"] == 1
     assert "# Slide 1: RAG 方案介绍" in document.content
     assert "支持多路查询" in document.content
+    assert "- 支持父子切块" in document.content

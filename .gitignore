@@ -5,8 +5,13 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 data/vector_store/
+data/milvus/
 data/eval_reports/
 *.npy
+modes/**/*.bin
+modes/**/*.safetensors
+modes/**/*.onnx_data
+data/milvus/*.db
 .env
 *.log
 .DS_Store

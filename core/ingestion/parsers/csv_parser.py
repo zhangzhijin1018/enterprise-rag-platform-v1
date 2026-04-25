@@ -27,6 +27,44 @@ from core.models.document import Document
 
 from .base import BaseParser
 
+_ROW_TITLE_HEADERS = (
+    "code",
+    "name",
+    "title",
+    "question",
+    "doc_number",
+    "system_name",
+    "编号",
+    "名称",
+    "标题",
+    "问题",
+)
+
+
+def _pick_row_title(headers: list[str], row: list[str]) -> str:
+    """挑一到两个最有代表性的字段，拼成行标题。"""
+
+    candidates: list[str] = []
+    lowered_headers = [header.strip().casefold() for header in headers]
+    for preferred in _ROW_TITLE_HEADERS:
+        preferred_norm = preferred.casefold()
+        for idx, header in enumerate(lowered_headers):
+            if preferred_norm == header and idx < len(row):
+                value = clean_text(row[idx]).strip()
+                if value:
+                    candidates.append(value)
+                    break
+        if len(candidates) >= 2:
+            break
+    if candidates:
+        return " / ".join(candidates[:2])
+    for idx, value in enumerate(row):
+        text = clean_text(value).strip()
+        if text:
+            label = headers[idx] if idx < len(headers) else f"column_{idx + 1}"
+            return f"{label}: {text}"
+    return ""
+
 
 class CsvParser(BaseParser):
     """CSV / TSV 风格表格解析器。"""
@@ -72,7 +110,11 @@ class CsvParser(BaseParser):
             for row_idx, row in enumerate(rows[1:], start=1):
                 if not any((cell or "").strip() for cell in row):
                     continue
-                lines.append(f"## Row {row_idx}")
+                row_title = _pick_row_title(headers, row)
+                if row_title:
+                    lines.append(f"## Row {row_idx}: {row_title}")
+                else:
+                    lines.append(f"## Row {row_idx}")
                 for col_idx, value in enumerate(row):
                     header = headers[col_idx] if col_idx < len(headers) else f"column_{col_idx + 1}"
                     text = clean_text(value).strip()

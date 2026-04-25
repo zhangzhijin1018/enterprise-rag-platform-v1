@@ -1,10 +1,19 @@
-"""指标定义模块。集中声明 Prometheus 指标，并提供 /metrics 响应辅助函数。"""
+"""指标定义模块。
+
+这里集中声明 Prometheus 指标，目的是：
+1. 统一指标命名
+2. 统一标签设计
+3. 避免指标散落在各个模块里难以维护
+"""
 
 from __future__ import annotations
 
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 metrics_registry = CollectorRegistry()
+# 独立 registry 的好处是：
+# - 不污染进程里其他库的默认指标
+# - 测试时更容易控制输出内容
 
 REQUEST_LATENCY = Histogram(
     "erp_http_request_duration_seconds",
@@ -57,5 +66,7 @@ FAITHFULNESS_SCORE = Gauge(
 
 
 def metrics_response() -> tuple[bytes, str]:
+    """生成 `/metrics` 响应内容。"""
+
     data = generate_latest(metrics_registry)
     return data, CONTENT_TYPE_LATEST

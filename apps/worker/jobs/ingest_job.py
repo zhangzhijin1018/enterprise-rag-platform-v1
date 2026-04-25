@@ -15,5 +15,12 @@ def run_ingest_path(
     source: str | None = None,
     replace_all: bool = False,
 ) -> None:
+    """执行单文件入库。
+
+    这是 worker 侧最短主路径：
+    - parse_and_chunk_file 负责把原始文件变成 chunks
+    - index_chunks 负责把 chunks 写入索引并刷新运行时
+    """
+
     _, chunks = parse_and_chunk_file(path, source=source)
     index_chunks(runtime, chunks, replace_all=replace_all)

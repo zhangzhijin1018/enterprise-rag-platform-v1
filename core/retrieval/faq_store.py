@@ -44,7 +44,11 @@ class FaqEntry:
 
 
 class MysqlFaqStore:
-    """MySQL FAQ 存储访问层。"""
+    """MySQL FAQ 存储访问层。
+
+    这层只做 FAQ 持久化和基础管理，不负责检索排序。
+    检索排序交给 `MysqlFaqRetriever` 在内存里完成。
+    """
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
@@ -184,7 +188,12 @@ class MysqlFaqStore:
         return rows
 
     def import_csv(self, path: Path) -> int:
-        """从 CSV 导入 FAQ，并返回导入条数。"""
+        """从 CSV 导入 FAQ，并返回导入条数。
+
+        当前导入策略偏简单直接：
+        - 先全量读 CSV
+        - 再按 question 做 upsert
+        """
 
         entries = self._read_csv(path)
         self.upsert_entries(entries)
@@ -229,7 +238,10 @@ class MysqlFaqStore:
                 )
 
     def list_enabled_entries(self) -> list[FaqEntry]:
-        """读取当前启用的 FAQ 条目。"""
+        """读取当前启用的 FAQ 条目。
+
+        这批结果后续会被 FAQ 检索器整体读入内存，重建 BM25 索引。
+        """
 
         if not self._enabled:
             return []

@@ -19,7 +19,12 @@ logger = get_logger(__name__)
 
 
 class RedisCache:
-    """一个非常薄的 Redis JSON 缓存封装。"""
+    """一个非常薄的 Redis JSON 缓存封装。
+
+    当前主要缓存两类信息：
+    - 热点最终答案
+    - 查询理解 / 规划等可复用中间结果
+    """
 
     def __init__(self) -> None:
         self._client: redis.Redis | None = None
@@ -34,7 +39,12 @@ class RedisCache:
                 self._client = None
 
     def _key(self, prefix: str, payload: str) -> str:
-        """构造稳定缓存键。"""
+        """构造稳定缓存键。
+
+        这里不直接用原始 payload 做 key，是为了：
+        - 避免 key 过长
+        - 避免日志和 Redis key 里直接暴露原始问题文本
+        """
 
         h = hashlib.sha256(payload.encode()).hexdigest()[:24]
         return f"erp:{prefix}:{h}"

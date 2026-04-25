@@ -36,9 +36,7 @@ COPY --from=webbuilder /build/dist ./apps/web/dist
 RUN pip install --disable-pip-version-check --retries 5 --timeout 300 -e .
 
 ENV PYTHONUNBUFFERED=1
-ENV VECTOR_STORE_PATH=/data/vector_store
-
-RUN mkdir -p /data/vector_store
+RUN mkdir -p /data/milvus
 
 EXPOSE 8000
 

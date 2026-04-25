@@ -1,4 +1,9 @@
-"""链路追踪配置模块。负责初始化 OpenTelemetry，并按配置接入 OTLP 导出。"""
+"""链路追踪配置模块。
+
+当前目标不是做复杂 tracing 编排，而是给项目留一个统一的 OTel 接入口：
+- 本地不配 exporter 也能正常启动
+- 配了 OTLP endpoint 后可以平滑接到外部 tracing 系统
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,8 @@ from core.config.settings import get_settings
 
 
 def setup_tracing() -> trace.Tracer:
+    """初始化 tracer 并按配置接入 OTLP 导出。"""
+
     settings = get_settings()
     resource = Resource.create(
         {"service.name": settings.otel_service_name, "deployment.environment": settings.app_env}
@@ -24,6 +31,7 @@ def setup_tracing() -> trace.Tracer:
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
         except Exception:  # noqa: BLE001
+            # tracing 不能反过来把主业务链路拖挂，所以这里静默降级。
             pass
     trace.set_tracer_provider(provider)
     return trace.get_tracer(settings.otel_service_name)
